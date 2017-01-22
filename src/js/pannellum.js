@@ -66,7 +66,9 @@ var config,
     externalEventListeners = {},
     specifiedPhotoSphereExcludes = [],
     update = false, // Should we update when still to render dynamic content
-    hotspotsCreated = false;
+    hotspotsCreated = false,
+    currentHotSpot,
+    walkedOn = false;
 
 var defaultConfig = {
     hfov: 100,
@@ -396,6 +398,55 @@ function init() {
 function absoluteURL(url) {
     // From http://stackoverflow.com/a/19709846
     return new RegExp('^(?:[a-z]+:)?//', 'i').test(url) || url[0] == '/' || url.slice(0, 5) == 'blob:';
+};
+
+/**
+ * Saves hot spot if is nearest to the canvas center.
+ * @private
+ * @param {number} left - Hot spots left indent.
+ * @param {Object} hs - Hot spot.
+ * @returns {boolean} True if updated, else false.
+ */
+function updateHotSpot(left, hs) {
+    if (!currentHotSpot) {
+        currentHotSpot = [hs, left];
+        return true;
+    }
+
+    var canvasCenter = renderer.getCanvas().width / 2;
+    var isNearest = Math.abs(canvasCenter - currentHotSpot[1]) > Math.abs(canvasCenter - left);
+
+    if (isNearest)  {
+        currentHotSpot = [hs, left];
+        return true;
+    }
+    return false;
+}
+
+/**
+ * Clears currentHotSpot variable.
+ * @private
+ */
+function clearCurrentHotSpot(){
+    if (currentHotSpot) {
+        currentHotSpot = null;
+        console.log('currentHotSpot is deleted');
+    }
+}
+
+/**
+ * Load scene by the hot spot nearest to canvas center, clear hot spot storage.
+ * @private
+ */
+function walkOn() {
+    if (currentHotSpot && !walkedOn) {
+        var loadNextScene = function(hs) {
+            loadScene(hs.sceneId, hs.targetPitch, hs.targetYaw, hs.targetHfov);
+            walkedOn = false;
+        }
+        walkedOn = true;
+        setTimeout(loadNextScene, 400, currentHotSpot[0]);
+    }
 };
 
 /**
@@ -1074,7 +1125,7 @@ function keyRepeat() {
         return;
     }
 
-    var isKeyDown = false;
+    var isKeyDown = !walkedOn;
 
     var prevPitch = config.pitch;
     var prevYaw = config.yaw;
@@ -1106,15 +1157,19 @@ function keyRepeat() {
     
     // If up arrow or "w" is down
     if (keysDown[2] || keysDown[6]) {
-        // Pan up
-        config.pitch += (speed.pitch * 0.8 + 0.2) * diff;
-        isKeyDown = true;
+        // Zoom in and walk on if able to
+        if (config.keyboardZoom === true) {
+            setHfov(config.hfov + (speed.hfov * 0.8 - 0.2) * diff);
+            isKeyDown = true;
+        }
+        // Load the next scene in front
+        walkOn();
     }
     
     // If down arrow or "s" is down
-    if (keysDown[3] || keysDown[7]) {
-        // Pan down
-        config.pitch += (speed.pitch * 0.8 - 0.2) * diff;
+    if (keysDown[3] || keysDown[7] && config.keyboardZoom === true) {
+        // Zoom out
+        setHfov(config.hfov + (speed.hfov * 0.8 + 0.5) * diff);
         isKeyDown = true;
     }
     
@@ -1185,7 +1240,7 @@ function keyRepeat() {
             config.pitch += speed.pitch * diff * friction;
         }
         // Zoom
-        if (!keysDown[0] && !keysDown[1] && !animatedMove.hfov) {
+        if (!keysDown[0] && !keysDown[1] && !keysDown[2] && !keysDown[3] && !keysDown[6] && !keysDown[7] && !animatedMove.hfov) {
             setHfov(config.hfov + speed.hfov * diff * friction);
         }
     }
@@ -1209,6 +1264,7 @@ function keyRepeat() {
     }
     if ((keysDown[2] || keysDown[6]) && (keysDown[3] || keysDown[7])) {
         speed.pitch = 0;
+        speed.hfov = 0;
     }
     if ((keysDown[4] || keysDown[8]) && (keysDown[5] || keysDown[9])) {
         speed.yaw = 0;
@@ -1678,6 +1734,7 @@ function destroyHotSpots() {
     }
     hotspotsCreated = false;
     delete config.hotSpots;
+    clearCurrentHotSpot();
 }
 
 /**
@@ -1716,6 +1773,19 @@ function renderHotSpot(hs) {
         coord[1] += (canvasHeight - hs.div.offsetHeight) / 2;
         var transform = 'translate(' + coord[0] + 'px, ' + coord[1] +
             'px) translateZ(9999px) rotate(' + config.roll + 'deg)';
+        if (loaded && hs.sceneId) {
+            // Clear hot spot if out of canvas, else try to update current
+            var canvasCenter = renderer.getCanvas().width / 2;
+            if (Math.abs(canvasCenter - coord[0]) > canvasCenter) {
+                clearCurrentHotSpot();
+            } else {
+                var hotSpotUpdated = updateHotSpot(coord[0], hs);
+                // to be deleted #l
+                if (hotSpotUpdated) {
+                    console.log('Hot spot updated', hs.sceneId);
+                }
+            }
+        }
         hs.div.style.webkitTransform = transform;
         hs.div.style.MozTransform = transform;
         hs.div.style.transform = transform;
@@ -1819,7 +1889,7 @@ function processOptions() {
                 break;
             
             case 'author':
-                infoDisplay.author.innerHTML = 'by ' + escapeHTML(config[key]);
+                infoDisplay.author.innerHTML = 'at ' + escapeHTML(config[key]);
                 infoDisplay.container.style.display = 'inline';
                 break;
             
@@ -2018,7 +2088,7 @@ function load() {
     clearError();
 
     controls.load.style.display = 'none';
-    infoDisplay.load.box.style.display = 'inline';
+    // infoDisplay.load.box.style.display = 'inline'; //todo: delete #l
     init();
 }
 
